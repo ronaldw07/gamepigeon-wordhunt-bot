@@ -12,6 +12,9 @@ TILE_PROFILE_THRESHOLD = 0.3
 # Trim off each tile edge before OCR so tile shading isn't read as a letter.
 TILE_INSET_FRACTION = 1 / 8
 LETTER_DARKNESS = 90
+# OCR reads a lone I as T. I is the only capital that is a thin bar: about
+# 0.2 as wide as tall, against 0.65 for the narrowest others (E, L).
+I_MAX_WIDTH_RATIO = 0.35
 OCR_PADDING = 20
 
 
@@ -77,11 +80,21 @@ def tile_boxes(image, board):
     ]
 
 
+def is_letter_i(ink_mask):
+    _, _, stats, _ = cv2.connectedComponentsWithStats(ink_mask.astype(np.uint8))
+    if len(stats) < 2:
+        return False
+    _, _, w, h, _ = max(stats[1:], key=lambda s: s[4])
+    return w / h < I_MAX_WIDTH_RATIO
+
+
 def read_letter(image, box, reader):
     x0, y0, x1, y1 = box
     inset = int((x1 - x0) * TILE_INSET_FRACTION)
     tile = image[y0 + inset:y1 - inset, x0 + inset:x1 - inset]
     gray = cv2.cvtColor(tile, cv2.COLOR_RGB2GRAY)
+    if is_letter_i(gray < LETTER_DARKNESS):
+        return "I"
     ink = np.where(gray < LETTER_DARKNESS, 0, 255).astype(np.uint8)
     padded = cv2.copyMakeBorder(
         ink, OCR_PADDING, OCR_PADDING, OCR_PADDING, OCR_PADDING,

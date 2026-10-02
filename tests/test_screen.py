@@ -3,9 +3,9 @@ from pathlib import Path
 import easyocr
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
-from screen import find_board, find_start_button, read_board
+from screen import find_board, find_start_button, read_board, read_letter
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -32,3 +32,12 @@ def test_reads_every_letter_of_the_game_board(reader):
     assert grid == ["GSYN", "ROAS", "RKNA", "EEVG"]
     assert len(centers) == 16
 
+
+
+@pytest.mark.parametrize("letter", ["I", "T", "L", "J"])
+def test_thin_bar_reads_as_i_and_nothing_else_does(reader, letter):
+    font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 40, index=1)
+    tile = Image.new("RGB", (65, 65), (245, 200, 130))
+    ImageDraw.Draw(tile).text((32, 32), letter, font=font, fill=(0, 0, 0), anchor="mm")
+
+    assert read_letter(np.array(tile), (0, 0, 65, 65), reader) == letter
