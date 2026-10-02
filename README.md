@@ -35,15 +35,13 @@ To check what it reads without touching the game, open a board and run
   the start of a dictionary word. Words play longest first; at equal length,
   common words go before obscure Scrabble ones.
 - `wordhunt_bot.py` drags through each word with real mouse-drag events, then
-  spends any spare time resubmitting long words in case a touch was dropped.
+  sends every word once more in case a touch was dropped.
 
 `words.txt` combines Collins Scrabble Words and ENABLE; `common_words.txt` is
 ENABLE alone.
 
-GamePigeon doesn't accept every Scrabble word. While there's time to spare,
-the bot watches the score card after each drag to see whether the word
-counted. Words that fail twice are added to `rejected_words.txt` and skipped
-in later games. Delete a line from that file to let the bot try it again.
+GamePigeon doesn't accept every Scrabble word. Words listed in
+`rejected_words.txt` are skipped; add any you see the game turn down.
 
 ## Tuning
 

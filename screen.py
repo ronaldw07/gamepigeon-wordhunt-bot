@@ -103,29 +103,3 @@ def read_board(image, board, reader):
     }
     return grid, centers
 
-
-# A channel difference this large means real content changed, not stream
-# compression noise; this many such pixels means the digits changed.
-CARD_CHANGE_DIFF = 60
-CARD_CHANGE_PIXELS = 30
-
-
-def find_score_card(image):
-    """Bounding box (x, y, w, h) of the white WORDS/SCORE card at the top of
-    the game screen, or None."""
-    top = image[: image.shape[0] // 4]
-    white = (top.min(axis=2) > 225).astype(np.uint8)
-    _, _, stats, _ = cv2.connectedComponentsWithStats(white)
-    cards = [tuple(int(v) for v in s[:4]) for s in stats[1:] if s[2] > image.shape[1] * 0.5]
-    return max(cards, key=lambda box: box[2] * box[3], default=None)
-
-
-def card_changed(before, after, card):
-    """Whether the score card differs between two captures, which happens
-    when the game accepts a word."""
-    x, y, w, h = card
-    a = before[y:y + h, x:x + w].astype(int)
-    b = after[y:y + h, x:x + w].astype(int)
-    if a.shape != b.shape:
-        return True
-    return int((np.abs(a - b).max(axis=2) > CARD_CHANGE_DIFF).sum()) > CARD_CHANGE_PIXELS
