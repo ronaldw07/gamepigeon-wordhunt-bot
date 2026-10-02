@@ -85,9 +85,20 @@ def screenshot(window):
         return np.array(Image.open(f.name).convert("RGB"))
 
 
-def to_screen_points(pixel, window, scale):
+def capture():
+    """(window, image) taken together. The window moves and resizes as the
+    phone changes screens, so positions are only valid for the bounds they
+    were captured with."""
+    window = find_mirroring_window()
+    if window is None:
+        return None, None
+    return window, screenshot(window)
+
+
+def to_screen_points(pixel, window, image):
     """Screenshots are in display pixels (2x on Retina), the mouse moves in
     points measured from the main display's corner."""
+    scale = image.shape[1] / window[2]
     return window[0] + pixel[0] / scale, window[1] + pixel[1] / scale
 
 
@@ -114,40 +125,35 @@ def click(point):
     post_mouse(kCGEventLeftMouseUp, point)
 
 
-def press_start(window, scale):
-    """Click Start if it is showing, then wait for the board. Returns the
-    first in-game screenshot and board box, or (None, None) on timeout."""
+def wait_for_board(reader, should_press_start):
+    """Press Start if it is showing, then read the board once it has settled:
+    the same window, board position, and letters in two captures in a row, so
+    nothing is read mid-animation. Returns (grid, points) with each tile's
+    screen position, or (None, None)."""
     deadline = time.time() + BOARD_WAIT_SECONDS
+    previous = None
     while time.time() < deadline and not stop_requested.is_set():
-        image = screenshot(window)
-        start = find_start_button(image)
-        if start:
-            click(to_screen_points(start, window, scale))
-        else:
-            board = find_board(image)
-            if board:
-                return image, board
+        window, image = capture()
+        start = find_start_button(image) if image is not None else None
+        board = find_board(image) if image is not None else None
+        if start and should_press_start:
+            click(to_screen_points(start, window, image))
+            previous = None
+        elif board:
+            grid, centers = read_board(image, board, reader)
+            complete = len(grid) > 0 and all(len(row) == len(grid) for row in grid)
+            current = (window, board, tuple(grid)) if complete else None
+            if current and current == previous:
+                points = {tile: to_screen_points(c, window, image) for tile, c in centers.items()}
+                return grid, points
+            previous = current
         time.sleep(POLL_INTERVAL)
     return None, None
 
 
-def read_board_until_complete(image, board, reader, window):
-    """Tiles can still be animating in on the first frame, so reread until
-    every tile gives exactly one letter."""
-    deadline = time.time() + BOARD_WAIT_SECONDS
-    while True:
-        grid, centers = read_board(image, board, reader)
-        complete = len(grid) > 0 and all(len(row) == len(grid) for row in grid)
-        if complete or time.time() > deadline:
-            return grid, centers
-        time.sleep(POLL_INTERVAL)
-        image = screenshot(window)
-        board = find_board(image) or board
-
-
-def play(words, found, centers, window, scale, deadline):
+def play(words, found, points, deadline):
     def submit(word):
-        drag_path([to_screen_points(centers[tile], window, scale) for tile in found[word]])
+        drag_path([points[tile] for tile in found[word]])
 
     for word in words:
         if time.time() > deadline or stop_requested.is_set():
@@ -184,26 +190,15 @@ def main():
 
     subprocess.run(["open", "-a", "iPhone Mirroring"], check=False)
     time.sleep(0.5)
-    window = find_mirroring_window()
-    if window is None:
+    if find_mirroring_window() is None:
         print("iPhone Mirroring isn't open. Open it, start a Word Hunt game, and try again.")
         return
-    scale = screenshot(window).shape[1] / window[2]
 
-    if args.dry_run:
-        image = screenshot(window)
-        board = find_board(image)
-    else:
-        image, board = press_start(window, scale)
-    if board is None:
-        print("No board found. Open a Word Hunt game in iPhone Mirroring to the Start screen and try again.")
+    grid, points = wait_for_board(reader, should_press_start=not args.dry_run)
+    if grid is None:
+        print("Couldn't read the board. Open a Word Hunt game in iPhone Mirroring to the Start screen and try again.")
         return
     round_start = time.time()
-
-    grid, centers = read_board_until_complete(image, board, reader, window)
-    if not grid or any(len(row) != len(grid) for row in grid):
-        print(f"Could not read every tile: {grid}")
-        return
 
     found = find_words(grid, words)
     ordered = play_order(found, common_words)
@@ -211,7 +206,7 @@ def main():
     if args.dry_run:
         return
 
-    play(ordered, found, centers, window, scale, round_start + ROUND_SECONDS - TIME_SAFETY_MARGIN)
+    play(ordered, found, points, round_start + ROUND_SECONDS - TIME_SAFETY_MARGIN)
     print(f"Done in {time.time() - round_start:.1f}s.")
 
 
