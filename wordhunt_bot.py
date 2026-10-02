@@ -1,21 +1,25 @@
 import argparse
 import subprocess
+import tempfile
 import threading
 import time
 from os import path
 
 import easyocr
 import numpy as np
-import pyautogui
+from PIL import Image
 from pynput import keyboard
 from Quartz import (
     CGEventCreateMouseEvent,
     CGEventPost,
+    CGWindowListCopyWindowInfo,
     kCGEventLeftMouseDown,
     kCGEventLeftMouseDragged,
     kCGEventLeftMouseUp,
     kCGHIDEventTap,
     kCGMouseButtonLeft,
+    kCGNullWindowID,
+    kCGWindowListOptionOnScreenOnly,
 )
 
 from screen import find_board, find_start_button, read_board
@@ -29,6 +33,7 @@ TIME_SAFETY_MARGIN = 1.5
 TOUCH_DOWN_PAUSE = 0.03
 TILE_STEP_PAUSE = 0.03
 BETWEEN_WORDS_PAUSE = 0.04
+CLICK_HOLD = 0.05
 BOARD_WAIT_SECONDS = 10
 POLL_INTERVAL = 0.3
 RETRY_MIN_WORD_LENGTH = 5
@@ -56,13 +61,34 @@ def path_to_file(filename):
     return path.abspath(path.join(path.dirname(__file__), filename))
 
 
-def screenshot():
-    return np.array(pyautogui.screenshot().convert("RGB"))
+def find_mirroring_window():
+    """Bounds (x, y, w, h) in screen points of the iPhone Mirroring window,
+    on whichever display it is, or None."""
+    windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+    bounds = [
+        w["kCGWindowBounds"] for w in windows
+        if w.get("kCGWindowOwnerName") == "iPhone Mirroring"
+        and w.get("kCGWindowName") == "iPhone Mirroring"
+    ]
+    if not bounds:
+        return None
+    b = max(bounds, key=lambda b: b["Width"] * b["Height"])
+    return int(b["X"]), int(b["Y"]), int(b["Width"]), int(b["Height"])
 
 
-def to_screen_points(pixel, scale):
-    """Screenshots are in Retina pixels, the mouse moves in points."""
-    return pixel[0] / scale, pixel[1] / scale
+def screenshot(window):
+    """Capture just the mirroring window. Works on any display, unlike a
+    full-screen grab, which only covers the main one."""
+    x, y, w, h = window
+    with tempfile.NamedTemporaryFile(suffix=".png") as f:
+        subprocess.run(["screencapture", "-x", f"-R{x},{y},{w},{h}", f.name], check=True)
+        return np.array(Image.open(f.name).convert("RGB"))
+
+
+def to_screen_points(pixel, window, scale):
+    """Screenshots are in display pixels (2x on Retina), the mouse moves in
+    points measured from the main display's corner."""
+    return window[0] + pixel[0] / scale, window[1] + pixel[1] / scale
 
 
 def post_mouse(kind, point):
@@ -82,15 +108,21 @@ def drag_path(points):
     time.sleep(BETWEEN_WORDS_PAUSE)
 
 
-def press_start(scale):
+def click(point):
+    post_mouse(kCGEventLeftMouseDown, point)
+    time.sleep(CLICK_HOLD)
+    post_mouse(kCGEventLeftMouseUp, point)
+
+
+def press_start(window, scale):
     """Click Start if it is showing, then wait for the board. Returns the
     first in-game screenshot and board box, or (None, None) on timeout."""
     deadline = time.time() + BOARD_WAIT_SECONDS
     while time.time() < deadline and not stop_requested.is_set():
-        image = screenshot()
+        image = screenshot(window)
         start = find_start_button(image)
         if start:
-            pyautogui.click(*to_screen_points(start, scale))
+            click(to_screen_points(start, window, scale))
         else:
             board = find_board(image)
             if board:
@@ -99,7 +131,7 @@ def press_start(scale):
     return None, None
 
 
-def read_board_until_complete(image, board, reader):
+def read_board_until_complete(image, board, reader, window):
     """Tiles can still be animating in on the first frame, so reread until
     every tile gives exactly one letter."""
     deadline = time.time() + BOARD_WAIT_SECONDS
@@ -109,13 +141,13 @@ def read_board_until_complete(image, board, reader):
         if complete or time.time() > deadline:
             return grid, centers
         time.sleep(POLL_INTERVAL)
-        image = screenshot()
+        image = screenshot(window)
         board = find_board(image) or board
 
 
-def play(words, found, centers, scale, deadline):
+def play(words, found, centers, window, scale, deadline):
     def submit(word):
-        drag_path([to_screen_points(centers[tile], scale) for tile in found[word]])
+        drag_path([to_screen_points(centers[tile], window, scale) for tile in found[word]])
 
     for word in words:
         if time.time() > deadline or stop_requested.is_set():
@@ -152,19 +184,23 @@ def main():
 
     subprocess.run(["open", "-a", "iPhone Mirroring"], check=False)
     time.sleep(0.5)
-    scale = pyautogui.screenshot().width / pyautogui.size().width
+    window = find_mirroring_window()
+    if window is None:
+        print("iPhone Mirroring isn't open. Open it, start a Word Hunt game, and try again.")
+        return
+    scale = screenshot(window).shape[1] / window[2]
 
     if args.dry_run:
-        image = screenshot()
+        image = screenshot(window)
         board = find_board(image)
     else:
-        image, board = press_start(scale)
+        image, board = press_start(window, scale)
     if board is None:
         print("No board found. Open a Word Hunt game in iPhone Mirroring to the Start screen and try again.")
         return
     round_start = time.time()
 
-    grid, centers = read_board_until_complete(image, board, reader)
+    grid, centers = read_board_until_complete(image, board, reader, window)
     if not grid or any(len(row) != len(grid) for row in grid):
         print(f"Could not read every tile: {grid}")
         return
@@ -175,7 +211,7 @@ def main():
     if args.dry_run:
         return
 
-    play(ordered, found, centers, scale, round_start + ROUND_SECONDS - TIME_SAFETY_MARGIN)
+    play(ordered, found, centers, window, scale, round_start + ROUND_SECONDS - TIME_SAFETY_MARGIN)
     print(f"Done in {time.time() - round_start:.1f}s.")
 
 

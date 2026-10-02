@@ -37,8 +37,10 @@ def find_start_button(image):
 
 
 def find_board(image):
-    """Bounding box (x, y, w, h) of the board's hollow green square, or None."""
-    min_width = image.shape[1] * 0.08
+    """Bounding box (x, y, w, h) of the board's hollow green square, or None.
+    The game board spans most of the window; the much smaller green boards in
+    Messages game previews are ignored."""
+    min_width = image.shape[1] * 0.6
     boards = [
         (x, y, w, h)
         for x, y, w, h, fill in green_blobs(image)
