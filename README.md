@@ -40,6 +40,11 @@ To check what it reads without touching the game, open a board and run
 `words.txt` combines Collins Scrabble Words and ENABLE; `common_words.txt` is
 ENABLE alone.
 
+GamePigeon doesn't accept every Scrabble word. While there's time to spare,
+the bot watches the score card after each drag to see whether the word
+counted. Words that fail twice are added to `rejected_words.txt` and skipped
+in later games. Delete a line from that file to let the bot try it again.
+
 ## Tuning
 
 If words come out wrong (tiles skipped mid-drag), raise `TILE_STEP_PAUSE` and

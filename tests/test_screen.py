@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from screen import find_board, find_start_button, read_board
+from screen import card_changed, find_board, find_score_card, find_start_button, read_board
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -31,3 +31,19 @@ def test_reads_every_letter_of_the_game_board(reader):
 
     assert grid == ["GSYN", "ROAS", "RKNA", "EEVG"]
     assert len(centers) == 16
+
+
+def test_score_card_found_on_the_game_screen_only():
+    assert find_score_card(load("board.png")) == (45, 32, 328, 97)
+    assert find_score_card(load("how_to_play.png")) is None
+
+
+def test_card_change_detected_only_when_the_card_differs():
+    image = load("board.png")
+    card = find_score_card(image)
+    edited = image.copy()
+    x, y, w, h = card
+    edited[y + 20:y + 40, x + 100:x + 120] = 0
+
+    assert not card_changed(image, image.copy(), card)
+    assert card_changed(image, edited, card)
